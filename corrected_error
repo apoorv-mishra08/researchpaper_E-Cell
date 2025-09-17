@@ -1,0 +1,384 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+from scipy.stats import chi2_contingency, spearmanr, pearsonr, chi2, mannwhitneyu
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, r2_score, mean_squared_error
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import FactorAnalysis
+import json
+import warnings
+warnings.filterwarnings('ignore')
+
+# Load dataset
+with open('new_dataset.json', 'r') as file:
+    data = json.load(file)
+df_raw = pd.DataFrame(data)
+
+print("="*80)
+print("E-CELL RESEARCH PAPER: COMPREHENSIVE STATISTICAL ANALYSIS")
+print("Updated Dataset with Enhanced Hypothesis Testing (H5, H6, H7)")
+print("="*80)
+
+# Data preprocessing
+def preprocess_data(df):
+    df_processed = df.copy()
+    
+    # Basic mappings
+    df_processed['Engineering_Degree'] = df_processed['Are you currently pursuing or have you completed an engineering degree?'].map({'Yes': 1, 'No': 0})
+    df_processed['Gender'] = df_processed['What is your gender?']
+    
+    # Year mapping
+    year_map = {'First Year': 1, 'Second Year': 2, 'Third Year': 3, 'Fourth Year': 4, 'Graduated': 5}
+    df_processed['Year_of_Study'] = df_processed['What year of study are you currently in?'].map(year_map)
+    
+    # E-Cell existence (handle "I haven't explored" as No)
+    ecell_map = {'Yes': 1, 'No': 0, "I haven't explored": 0}
+    df_processed['ECell_Exists'] = df_processed['Is there an established E-Cell (Entrepreneurship Cell) in your College / University?'].map(ecell_map)
+    
+    # Case study participation
+    df_processed['CaseStudy_Participation'] = df_processed['Have you ever participated in case study competitions?'].map({'Yes': 1, 'No': 0})
+    
+    # MBA and entrepreneurship plans
+    mba_map = {'Yes': 1, 'No': 0, 'Maybe': 0.5, 'Currently Pursuing': 1}
+    df_processed['MBA_Plan'] = df_processed['Do you plan to do MBA?'].map(mba_map)
+    
+    entr_map = {'Yes': 1, 'No': 0, 'Not Sure': 0.5}
+    df_processed['Entrepreneurship_Plan'] = df_processed['Do you plan to pursue entrepreneurship in the future?'].map(entr_map)
+    
+    # Effectiveness ratings
+    df_processed['SoftSkills_Importance'] = pd.to_numeric(df_processed['How important do you think soft skills are in your professional development?'], errors='coerce')
+    df_processed['CaseStudy_Effectiveness'] = pd.to_numeric(df_processed['How would you rate the effectiveness of case study events in enhancing your understanding of entrepreneurship?'], errors='coerce')
+    df_processed['Events_Effectiveness'] = pd.to_numeric(df_processed['How effective do you find college events in providing practical experience and networking opportunities?'], errors='coerce')
+    
+    # H5: Entrepreneurial aspirations (starting venture OR entering startup ecosystem)
+    career_goals = df_processed['What are your primary career goals? (Select all that apply)']
+    df_processed['Entrepreneurial_Aspiration'] = career_goals.str.contains('Starting my own venture|Entering the startup ecosystem', na=False).astype(int)
+    
+    # H6: Platform participation and success
+    platforms = df_processed['Which platforms have you used to participate in such competitions?']
+    df_processed['Platform_Participation'] = platforms.str.contains('Unstop|Company', na=False).astype(int)
+    df_processed['Secured_Opportunities'] = df_processed['Have you secured any internships or interviews as a result of participating in these competitions?'].map({'Yes': 1, 'No': 0})
+    
+    # H7: Motivation factors
+    motivations = df_processed['Which factors influence your decision to participate in a competition? (Select all that apply)']
+    df_processed['Motivation_Networking'] = motivations.str.contains('Networking Opportunities', na=False).astype(int)
+    df_processed['Motivation_Career'] = motivations.str.contains('Recruitment Opportunities|Career', na=False).astype(int)
+    df_processed['Motivation_Prizes'] = motivations.str.contains('Prizes and Rewards', na=False).astype(int)
+    df_processed['Motivation_Learning'] = motivations.str.contains('Learning Experience', na=False).astype(int)
+    
+    # E-Cell motivation (use broader participation indicator)
+    ecell_motivations = df_processed['What motivates you to engage with E-Cell/Related Clubs\' activities? (Select all that apply)']
+    df_processed['ECell_Motivation_Networking'] = ecell_motivations.str.contains('Networking', na=False).astype(int)
+    df_processed['ECell_Motivation_Career'] = ecell_motivations.str.contains('Career', na=False).astype(int)
+    
+    return df_processed
+
+df = preprocess_data(df_raw)
+
+print("\n" + "="*60)
+print("3A. DESCRIPTIVE STATISTICS")
+print("="*60)
+
+n_total = len(df)
+print(f"Total Sample Size: {n_total}")
+
+# Sample characteristics
+print(f"\n1. SAMPLE CHARACTERISTICS")
+print("-" * 40)
+
+gender_dist = df['Gender'].value_counts()
+print(f"Gender Distribution:")
+for gender, count in gender_dist.items():
+    print(f"  {gender}: {count} ({count/n_total*100:.1f}%)")
+
+eng_count = df['Engineering_Degree'].sum()
+print(f"Engineering Students: {eng_count}/{n_total} ({eng_count/n_total*100:.1f}%)")
+
+ecell_count = df['ECell_Exists'].sum()
+print(f"Colleges with E-Cells: {ecell_count}/{n_total} ({ecell_count/n_total*100:.1f}%)")
+
+# Career aspirations
+entr_count = df['Entrepreneurial_Aspiration'].sum()
+print(f"Entrepreneurial Aspirations: {entr_count}/{n_total} ({entr_count/n_total*100:.1f}%)")
+
+# Platform participation and success
+platform_count = df['Platform_Participation'].sum()
+success_count = df['Secured_Opportunities'].sum()
+print(f"Platform Users: {platform_count}/{n_total} ({platform_count/n_total*100:.1f}%)")
+print(f"Secured Opportunities: {success_count}/{n_total} ({success_count/n_total*100:.1f}%)")
+
+print("\n" + "="*60)
+print("3B. HYPOTHESIS TESTING")
+print("="*60)
+
+# H1: Case study participation vs entrepreneurship plans
+print("H1: Case Study Participation vs Entrepreneurship Plans")
+df_h1 = df.dropna(subset=['CaseStudy_Participation', 'Entrepreneurship_Plan'])
+if len(df_h1) > 0:
+    df_h1['Entrepreneurship_Binary'] = (df_h1['Entrepreneurship_Plan'] >= 0.5).astype(int)
+    contingency_h1 = pd.crosstab(df_h1['CaseStudy_Participation'], df_h1['Entrepreneurship_Binary'])
+    print(contingency_h1)
+    
+    chi2_h1, p_h1, dof_h1, expected_h1 = chi2_contingency(contingency_h1)
+    n = contingency_h1.sum().sum()
+    cramers_v_h1 = np.sqrt(chi2_h1 / (n * (min(contingency_h1.shape) - 1)))
+    
+    print(f"Chi-square: {chi2_h1:.4f}, p-value: {p_h1:.4f}, Cramer's V: {cramers_v_h1:.4f}")
+    print(f"Result: {'SIGNIFICANT' if p_h1 < 0.05 else 'NOT SIGNIFICANT'}")
+
+# H2: Case study participation vs MBA plans (Enhanced)
+print(f"\nH2: Case Study Participation vs MBA Plans (ENHANCED)")
+print("-" * 50)
+df_h2 = df.dropna(subset=['CaseStudy_Participation', 'MBA_Plan'])
+if len(df_h2) > 0:
+    df_h2['MBA_Binary'] = (df_h2['MBA_Plan'] >= 0.5).astype(int)
+    contingency_h2 = pd.crosstab(df_h2['CaseStudy_Participation'], df_h2['MBA_Binary'])
+    
+    print("Observed Contingency Table:")
+    print(contingency_h2)
+    
+    chi2_h2, p_h2, dof_h2, expected_h2 = chi2_contingency(contingency_h2)
+    
+    print("\nASSUMPTION CHECKS:")
+    expected_df = pd.DataFrame(expected_h2, index=contingency_h2.index, columns=contingency_h2.columns)
+    print("Expected Frequencies:")
+    print(expected_df.round(2))
+    
+    min_expected = np.min(expected_h2)
+    print(f"Minimum expected frequency: {min_expected:.2f}")
+    
+    if min_expected >= 5:
+        print("✓ Assumption MET")
+        assumption_met = True
+    else:
+        print("✗ Assumption VIOLATED")
+        assumption_met = False
+    
+    print(f"\nChi-square (χ²): {chi2_h2:.4f}")
+    print(f"Degrees of freedom: {dof_h2}")
+    print(f"p-value: {p_h2:.4f}")
+    
+    n = contingency_h2.sum().sum()
+    cramers_v_h2 = np.sqrt(chi2_h2 / (n * (min(contingency_h2.shape) - 1)))
+    print(f"Cramer's V: {cramers_v_h2:.4f}")
+    
+    if assumption_met:
+        if p_h2 < 0.05:
+            print("DECISION: REJECT null hypothesis")
+            print("CONCLUSION: Significant association exists")
+        else:
+            print("DECISION: FAIL TO REJECT null hypothesis")
+            print("CONCLUSION: No significant association")
+
+# H5: E-Cell presence vs Entrepreneurial aspirations
+print(f"\nH5: E-Cell Presence vs Entrepreneurial Aspirations")
+contingency_h5 = pd.crosstab(df['ECell_Exists'], df['Entrepreneurial_Aspiration'])
+print(contingency_h5)
+
+chi2_h5, p_h5, dof_h5, expected_h5 = chi2_contingency(contingency_h5)
+n = contingency_h5.sum().sum()
+cramers_v_h5 = np.sqrt(chi2_h5 / (n * (min(contingency_h5.shape) - 1)))
+
+print(f"Chi-square: {chi2_h5:.4f}, p-value: {p_h5:.4f}, Cramer's V: {cramers_v_h5:.4f}")
+print(f"Result: {'SIGNIFICANT' if p_h5 < 0.05 else 'NOT SIGNIFICANT'}")
+
+# H6: Platform participation vs securing opportunities
+print(f"\nH6: Platform Participation vs Securing Opportunities")
+contingency_h6 = pd.crosstab(df['Platform_Participation'], df['Secured_Opportunities'])
+print(contingency_h6)
+
+chi2_h6, p_h6, dof_h6, expected_h6 = chi2_contingency(contingency_h6)
+n = contingency_h6.sum().sum()
+cramers_v_h6 = np.sqrt(chi2_h6 / (n * (min(contingency_h6.shape) - 1)))
+
+print(f"Chi-square: {chi2_h6:.4f}, p-value: {p_h6:.4f}, Cramer's V: {cramers_v_h6:.4f}")
+print(f"Result: {'SIGNIFICANT' if p_h6 < 0.05 else 'NOT SIGNIFICANT'}")
+
+# H7: Motivation factors analysis (Fixed approach)
+print(f"\nH7: Motivation Factors Analysis")
+print("-" * 40)
+
+# Use case study participation as outcome instead of problematic E-Cell variable
+motivation_cols = ['Motivation_Networking', 'Motivation_Career', 'Motivation_Prizes', 'Motivation_Learning']
+available_cols = [col for col in motivation_cols if col in df.columns]
+
+if len(available_cols) >= 3:
+    reg_data = df[available_cols + ['CaseStudy_Participation']].dropna()
+    
+    if len(reg_data) > 10 and reg_data['CaseStudy_Participation'].nunique() > 1:
+        X = reg_data[available_cols]
+        y = reg_data['CaseStudy_Participation']
+        
+        try:
+            log_reg = LogisticRegression(random_state=42, max_iter=1000)
+            log_reg.fit(X, y)
+            
+            print("Logistic Regression - Predicting Case Study Participation:")
+            print(f"Sample size: {len(reg_data)}")
+            
+            for i, col in enumerate(available_cols):
+                coef = log_reg.coef_[0][i]
+                odds_ratio = np.exp(coef)
+                print(f"{col.replace('Motivation_', '')}: β={coef:.4f}, OR={odds_ratio:.4f}")
+            
+            # Compare networking+career vs prizes
+            networking_coef = log_reg.coef_[0][available_cols.index('Motivation_Networking')] if 'Motivation_Networking' in available_cols else 0
+            career_coef = log_reg.coef_[0][available_cols.index('Motivation_Career')] if 'Motivation_Career' in available_cols else 0
+            prizes_coef = log_reg.coef_[0][available_cols.index('Motivation_Prizes')] if 'Motivation_Prizes' in available_cols else 0
+            
+            combined_effect = networking_coef + career_coef
+            print(f"\nCOMPARISON:")
+            print(f"Combined Networking+Career effect: {combined_effect:.4f}")
+            print(f"Prizes effect: {prizes_coef:.4f}")
+            
+            if combined_effect > prizes_coef:
+                print("H7 SUPPORTED: Networking/Career motivations are stronger")
+            else:
+                print("H7 NOT SUPPORTED: Prizes motivation is stronger")
+                
+            accuracy = log_reg.score(X, y)
+            print(f"Model accuracy: {accuracy:.4f}")
+            
+        except ValueError as e:
+            print(f"Logistic regression failed: {e}")
+            print("Using correlation analysis instead:")
+            
+            # Alternative analysis using correlations
+            corr_with_participation = []
+            for col in available_cols:
+                corr, p_val = pearsonr(reg_data[col], reg_data['CaseStudy_Participation'])
+                corr_with_participation.append((col.replace('Motivation_', ''), corr, p_val))
+                print(f"{col.replace('Motivation_', '')}: r={corr:.4f}, p={p_val:.4f}")
+            
+            # Find strongest predictors
+            corr_with_participation.sort(key=lambda x: abs(x[1]), reverse=True)
+            print(f"Strongest predictor: {corr_with_participation[0][0]}")
+
+print("\n" + "="*60)
+print("3C. PREDICTIVE MODELING")
+print("="*60)
+
+# Logistic regression for case study participation
+print("1. LOGISTIC REGRESSION: Predicting Case Study Participation")
+features = ['Engineering_Degree', 'ECell_Exists', 'SoftSkills_Importance', 'Year_of_Study']
+available_features = [f for f in features if f in df.columns]
+
+reg_data = df[available_features + ['CaseStudy_Participation']].dropna()
+if len(reg_data) > 10 and reg_data['CaseStudy_Participation'].nunique() > 1:
+    X = reg_data[available_features]
+    y = reg_data['CaseStudy_Participation']
+    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    
+    log_reg = LogisticRegression(random_state=42, max_iter=1000)
+    log_reg.fit(X_train, y_train)
+    
+    print(f"Training Accuracy: {log_reg.score(X_train, y_train):.4f}")
+    print(f"Testing Accuracy: {log_reg.score(X_test, y_test):.4f}")
+    
+    print("Coefficients:")
+    for i, feature in enumerate(available_features):
+        coef = log_reg.coef_[0][i]
+        print(f"{feature}: β={coef:.4f}")
+
+# Linear regression for events effectiveness
+print(f"\n2. LINEAR REGRESSION: Predicting Events Effectiveness")
+lin_features = ['Engineering_Degree', 'ECell_Exists', 'CaseStudy_Participation', 'SoftSkills_Importance']
+available_lin_features = [f for f in lin_features if f in df.columns]
+
+lin_data = df[available_lin_features + ['Events_Effectiveness']].dropna()
+if len(lin_data) > 10:
+    X_lin = lin_data[available_lin_features]
+    y_lin = lin_data['Events_Effectiveness']
+    
+    X_train_lin, X_test_lin, y_train_lin, y_test_lin = train_test_split(X_lin, y_lin, test_size=0.3, random_state=42)
+    
+    lin_reg = LinearRegression()
+    lin_reg.fit(X_train_lin, y_train_lin)
+    
+    y_pred_lin = lin_reg.predict(X_test_lin)
+    r2_test = r2_score(y_test_lin, y_pred_lin)
+    rmse = np.sqrt(mean_squared_error(y_test_lin, y_pred_lin))
+    
+    print(f"R²: {r2_test:.4f}")
+    print(f"RMSE: {rmse:.4f}")
+
+# Visualization
+print("\n" + "="*60)
+print("3D. CREATING VISUALIZATIONS")
+print("="*60)
+
+fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+fig.suptitle('E-Cell Research: Key Findings', fontsize=16, fontweight='bold')
+
+# H5 visualization
+h5_data = pd.crosstab(df['ECell_Exists'].map({1: 'E-Cell Exists', 0: 'No E-Cell'}), 
+                      df['Entrepreneurial_Aspiration'].map({1: 'Entrepreneurial', 0: 'Not Entrepreneurial'}))
+h5_data.plot(kind='bar', ax=ax1, color=['lightcoral', 'lightblue'])
+ax1.set_title('H5: E-Cell vs Entrepreneurial Aspirations')
+ax1.set_xlabel('E-Cell Status')
+ax1.tick_params(axis='x', rotation=0)
+
+# H6 visualization
+h6_data = pd.crosstab(df['Platform_Participation'].map({1: 'Used Platforms', 0: 'No Platforms'}), 
+                      df['Secured_Opportunities'].map({1: 'Secured Jobs', 0: 'No Jobs'}))
+h6_data.plot(kind='bar', ax=ax2, color=['salmon', 'lightgreen'])
+ax2.set_title('H6: Platform Use vs Job Success')
+ax2.set_xlabel('Platform Usage')
+ax2.tick_params(axis='x', rotation=0)
+
+# Effectiveness ratings
+effectiveness_data = [df['SoftSkills_Importance'].dropna(), 
+                     df['CaseStudy_Effectiveness'].dropna(), 
+                     df['Events_Effectiveness'].dropna()]
+ax3.boxplot(effectiveness_data, labels=['Soft Skills', 'Case Studies', 'Events'])
+ax3.set_title('Effectiveness Ratings Distribution')
+ax3.set_ylabel('Rating (1-5)')
+
+# Motivation factors
+motivation_data = {}
+for col in ['Motivation_Networking', 'Motivation_Career', 'Motivation_Prizes', 'Motivation_Learning']:
+    if col in df.columns:
+        motivation_data[col.replace('Motivation_', '')] = df[col].sum()
+
+if motivation_data:
+    bars = ax4.bar(motivation_data.keys(), motivation_data.values())
+    ax4.set_title('H7: Motivation Factors Distribution')
+    ax4.set_ylabel('Number of Students')
+    
+    for bar in bars:
+        height = bar.get_height()
+        ax4.text(bar.get_x() + bar.get_width()/2., height,
+                f'{int(height)}', ha='center', va='bottom')
+
+plt.tight_layout()
+plt.show()
+
+print("\n" + "="*60)
+print("SUMMARY FOR RESEARCH PAPER")
+print("="*60)
+
+print(f"\nSAMPLE: n={n_total}")
+print(f"E-Cells present: {ecell_count}/{n_total} ({ecell_count/n_total*100:.1f}%)")
+print(f"Entrepreneurial aspirations: {entr_count}/{n_total} ({entr_count/n_total*100:.1f}%)")
+print(f"Platform users: {platform_count}/{n_total} ({platform_count/n_total*100:.1f}%)")
+print(f"Secured opportunities: {success_count}/{n_total} ({success_count/n_total*100:.1f}%)")
+
+print(f"\nHYPOTHESIS RESULTS:")
+if 'p_h5' in locals(): print(f"H5 (E-Cell → Entrepreneurship): {'SIGNIFICANT' if p_h5 < 0.05 else 'NOT SIGNIFICANT'} (p={p_h5:.3f})")
+if 'p_h6' in locals(): print(f"H6 (Platforms → Jobs): {'SIGNIFICANT' if p_h6 < 0.05 else 'NOT SIGNIFICANT'} (p={p_h6:.3f})")
+
+print(f"\nMOTIVATION ANALYSIS:")
+print(f"Most cited factors:")
+if 'motivation_data' in locals():
+    sorted_motivations = sorted(motivation_data.items(), key=lambda x: x[1], reverse=True)
+    for factor, count in sorted_motivations[:3]:
+        print(f"  {factor}: {count} students ({count/n_total*100:.1f}%)")
+
+print("\n" + "="*60)
+print("ANALYSIS COMPLETE")
+print("="*60)
